@@ -1,89 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import { supabase } from './supabaseClient';
 import type { User, Project, Follow, Comment, Like } from './supabaseClient';
-
-
-// --- Mock Data ---
-const mockUsers: User[] = [
-  {
-    id: 'user-1',
-    username: 'alex_codes',
-    profile_picture_url: `https://i.pravatar.cc/150?u=user-1`,
-    bio: 'Frontend developer passionate about React and beautiful UIs. Coffee enthusiast.',
-  },
-  {
-    id: 'user-2',
-    username: 'bella_builds',
-    profile_picture_url: `https://i.pravatar.cc/150?u=user-2`,
-    bio: 'Full-stack engineer exploring the world of serverless and Jamstack.',
-  },
-  {
-    id: 'user-3',
-    username: 'chris_designs',
-    profile_picture_url: `https://i.pravatar.cc/150?u=user-3`,
-    bio: 'UI/UX Designer creating intuitive and engaging digital experiences.',
-  },
-];
-
-const mockProjects: Project[] = [
-  {
-    id: 'proj-1',
-    user_id: 'user-1',
-    title: 'Personal Portfolio Website',
-    description: 'A sleek, animated portfolio built with Next.js and Framer Motion. Showcases my latest work and skills.',
-    project_url: 'https://github.com',
-    image_url: 'https://images.unsplash.com/photo-1555066931-4365d1469c8b?q=80&w=870&auto=format&fit=crop',
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-  },
-  {
-    id: 'proj-2',
-    user_id: 'user-2',
-    title: 'E-commerce Store API',
-    description: 'A robust RESTful API for an e-commerce platform using Node.js, Express, and PostgreSQL.',
-    project_url: 'https://github.com',
-    image_url: 'https://images.unsplash.com/photo-1587620962725-abab7fe55159?q=80&w=870&auto=format&fit=crop',
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-  },
-    {
-    id: 'proj-4',
-    user_id: 'user-1',
-    title: 'GraphQL Weather App',
-    description: 'A simple weather application that fetches data from a public GraphQL API. Built with Apollo Client.',
-    project_url: 'https://github.com',
-    image_url: 'https://images.unsplash.com/photo-1504608524841-42fe6f032b4b?q=80&w=774&auto=format&fit=crop',
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 1).toISOString(),
-  },
-  {
-    id: 'proj-3',
-    user_id: 'user-3',
-    title: 'Task Management App Design',
-    description: 'A Figma design for a clean and user-friendly task management application. Focus on accessibility.',
-    project_url: 'https://github.com',
-    image_url: 'https://images.unsplash.com/photo-1522199755839-a2bacb67c546?q=80&w=872&auto=format&fit=crop',
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10).toISOString(),
-  },
-].sort((a, b) => new Date(b.created_at!).getTime() - new Date(a.created_at!).getTime());
-
-const mockComments: Comment[] = [
-  { id: 'comment-1', project_id: 'proj-1', user_id: 'user-2', content: 'This looks amazing! Love the animations.', created_at: new Date().toISOString() },
-  { id: 'comment-2', project_id: 'proj-1', user_id: 'user-3', content: 'Great work on the UI, very clean.', created_at: new Date().toISOString() },
-  { id: 'comment-3', project_id: 'proj-2', user_id: 'user-1', content: 'Awesome backend structure!', created_at: new Date().toISOString() },
-];
-
-const mockLikes: Like[] = [
-  { user_id: 'user-1', project_id: 'proj-2' },
-  { user_id: 'user-1', project_id: 'proj-3' },
-  { user_id: 'user-2', project_id: 'proj-1' },
-  { user_id: 'user-3', project_id: 'proj-1' },
-  { user_id: 'user-3', project_id: 'proj-2' },
-];
-
-const mockFollows: Follow[] = [
-  { follower_id: 'user-1', followee_id: 'user-2' },
-  { follower_id: 'user-1', followee_id: 'user-3' },
-  { follower_id: 'user-2', followee_id: 'user-1' },
-  { follower_id: 'user-3', followee_id: 'user-1' },
-];
 
 
 // --- Prop Types ---
@@ -115,7 +33,7 @@ interface ProfilePageProps {
 interface CreatePostModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onAddProject: (projectData: Omit<Project, 'id' | 'user_id' | 'created_at'>) => void;
+    onAddProject: (projectData: Omit<Project, 'id' | 'user_id' | 'created_at' | 'image_url'>, imageFile: File) => void;
 }
 
 
@@ -287,19 +205,27 @@ const Feed = ({ projects, users, onAuthorClick, allComments, allLikes, onAddComm
   );
 };
 
+import { generateDescription } from './geminiClient';
+
 const CreatePostModal = ({ isOpen, onClose, onAddProject }: CreatePostModalProps) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [projectUrl, setProjectUrl] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Effect to revoke object URL on unmount or when previewUrl changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Revoke the old URL if it exists to prevent memory leaks
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-
     const file = e.target.files?.[0];
     if (file) {
       setImageFile(file);
@@ -315,10 +241,8 @@ const CreatePostModal = ({ isOpen, onClose, onAddProject }: CreatePostModalProps
     setDescription('');
     setProjectUrl('');
     setImageFile(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
     setPreviewUrl('');
+    setIsGenerating(false);
   };
 
   const handleClose = () => {
@@ -326,25 +250,30 @@ const CreatePostModal = ({ isOpen, onClose, onAddProject }: CreatePostModalProps
     onClose();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !description || !projectUrl || !imageFile) {
       alert("Please fill all fields and upload an image.");
       return;
     }
+    await onAddProject({ title, description, project_url: projectUrl }, imageFile);
+    handleClose();
+  };
 
-    // Pass the previewUrl to the parent, but don't revoke it.
-    // It's now "owned" by the App's state and will be used for rendering.
-    onAddProject({ title, description, project_url: projectUrl, image_url: previewUrl });
-
-    // Reset form state for the next time the modal opens, without revoking the just-used URL
-    setTitle('');
-    setDescription('');
-    setProjectUrl('');
-    setImageFile(null);
-    setPreviewUrl('');
-
-    onClose();
+  const handleGenerateDescription = async () => {
+      if (!title) {
+          alert("Please enter a project title first.");
+          return;
+      }
+      setIsGenerating(true);
+      try {
+          const generatedDesc = await generateDescription(title);
+          setDescription(generatedDesc);
+      } catch (error) {
+          alert("Failed to generate description. Please check your API key and try again.");
+      } finally {
+          setIsGenerating(false);
+      }
   };
 
   if (!isOpen) return null;
@@ -362,7 +291,17 @@ const CreatePostModal = ({ isOpen, onClose, onAddProject }: CreatePostModalProps
                     <input id="title" type="text" value={title} onChange={e => setTitle(e.target.value)} className="form-input" required />
                 </div>
                 <div className="form-group">
-                    <label htmlFor="description">Description</label>
+                    <div className="label-with-action">
+                        <label htmlFor="description">Description</label>
+                        <button
+                            type="button"
+                            className="ai-generate-btn"
+                            onClick={handleGenerateDescription}
+                            disabled={isGenerating || !title}
+                        >
+                            {isGenerating ? 'Generating...' : 'Generate with AI'}
+                        </button>
+                    </div>
                     <textarea id="description" value={description} onChange={e => setDescription(e.target.value)} className="form-textarea" rows={4} required></textarea>
                 </div>
                  <div className="form-group">
@@ -403,7 +342,7 @@ const CreatePostModal = ({ isOpen, onClose, onAddProject }: CreatePostModalProps
 
 const ProfilePage = ({ userId, currentUser, allProjects, allUsers, allFollows, allComments, allLikes, onAuthorClick, onFollowToggle, onAddComment, onLikeToggle }: ProfilePageProps) => {
     const user = allUsers.find(u => u.id === userId);
-    const userProjects = allProjects.filter(p => p.user_id === userId);
+    const userProjects = allProjects.filter(p => p.user_id === userId).sort((a, b) => new Date(b.created_at!).getTime() - new Date(a.created_at!).getTime());
 
     if (!user) {
         return <div className="centered-message">User not found!</div>;
@@ -453,63 +392,175 @@ const ProfilePage = ({ userId, currentUser, allProjects, allUsers, allFollows, a
     );
 };
 
-
 const App = () => {
-  const [allProjects, setAllProjects] = useState<Project[]>(mockProjects);
-  const [allUsers, setAllUsers] = useState<User[]>(mockUsers);
-  const [allFollows, setAllFollows] = useState<Follow[]>(mockFollows);
-  const [allComments, setAllComments] = useState<Comment[]>(mockComments);
-  const [allLikes, setAllLikes] = useState<Like[]>(mockLikes);
-  const [currentUser, setCurrentUser] = useState<User | null>(mockUsers[0]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [allFollows, setAllFollows] = useState<Follow[]>([]);
+  const [allComments, setAllComments] = useState<Comment[]>([]);
+  const [allLikes, setAllLikes] = useState<Like[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [view, setView] = useState<{ page: 'feed' | 'profile'; data: string | null }>({ page: 'feed', data: null });
+  const [loading, setLoading] = useState(true);
 
-  const handleAddProject = (newProjectData: Omit<Project, 'id' | 'user_id' | 'created_at'>) => {
-    if (!currentUser) return;
-    const projectToAdd: Project = { 
-        ...newProjectData, 
-        user_id: currentUser.id,
-        id: `proj-${Date.now()}`,
-        created_at: new Date().toISOString()
-    };
-    setAllProjects([projectToAdd, ...allProjects]);
-  };
+  async function fetchData() {
+    setLoading(true);
+    try {
+        const [
+            { data: users, error: usersError },
+            { data: projects, error: projectsError },
+            { data: comments, error: commentsError },
+            { data: likes, error: likesError },
+            { data: follows, error: followsError },
+        ] = await Promise.all([
+            supabase.from('users').select('*'),
+            supabase.from('projects').select('*').order('created_at', { ascending: false }),
+            supabase.from('comments').select('*'),
+            supabase.from('likes').select('*'),
+            supabase.from('follows').select('*'),
+        ]);
 
-  const handleAddComment = (projectId: string, content: string) => {
-      if (!currentUser) return;
-      const newCommentData: Comment = { 
-          project_id: projectId, 
-          user_id: currentUser.id, 
-          content,
-          id: `comment-${Date.now()}`,
-          created_at: new Date().toISOString()
-      };
-      setAllComments([...allComments, newCommentData]);
-  };
-  
-  const handleFollowToggle = (profileUserId: string) => {
-    if (!currentUser) return;
-    const isFollowing = allFollows.some(f => f.follower_id === currentUser.id && f.followee_id === profileUserId);
-    if (isFollowing) {
-        setAllFollows(allFollows.filter(f => !(f.follower_id === currentUser.id && f.followee_id === profileUserId)));
-    } else {
-        const newFollow: Follow = { follower_id: currentUser.id, followee_id: profileUserId };
-        setAllFollows([...allFollows, newFollow]);
+        if (usersError) throw usersError;
+        if (projectsError) throw projectsError;
+        if (commentsError) throw commentsError;
+        if (likesError) throw likesError;
+        if (followsError) throw followsError;
+
+        setAllUsers(users || []);
+        setAllProjects(projects || []);
+        setAllComments(comments || []);
+        setAllLikes(likes || []);
+        setAllFollows(follows || []);
+
+        if (users && users.length > 0) {
+            // In a real app, you'd get the logged-in user.
+            // For now, we'll just pick the first user as the "current" one.
+            setCurrentUser(users[0]);
+        }
+    } catch (error) {
+        console.error("Error fetching data:", error);
+        alert("Failed to fetch data from Supabase. Make sure your database is set up and credentials are correct.");
+    } finally {
+        setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleAddProject = async (projectData: Omit<Project, 'id' | 'user_id' | 'created_at' | 'image_url'>, imageFile: File) => {
+    if (!currentUser) {
+        alert("You must be logged in to create a project.");
+        return;
+    }
+
+    try {
+        // 1. Upload image to Supabase Storage
+        const filePath = `${currentUser.id}/${Date.now()}-${imageFile.name}`;
+        const { error: uploadError } = await supabase.storage
+            .from('project-images')
+            .upload(filePath, imageFile);
+
+        if (uploadError) throw uploadError;
+
+        // 2. Get public URL of the uploaded image
+        const { data: { publicUrl } } = supabase.storage
+            .from('project-images')
+            .getPublicUrl(filePath);
+
+        if (!publicUrl) throw new Error("Could not get public URL for the image.");
+
+        // 3. Insert project data into the 'projects' table
+        const projectToAdd = {
+            ...projectData,
+            user_id: currentUser.id,
+            image_url: publicUrl,
+        };
+
+        const { data: newProject, error: insertError } = await supabase
+            .from('projects')
+            .insert(projectToAdd)
+            .select()
+            .single();
+
+        if (insertError) throw insertError;
+
+        // 4. Optimistically update UI
+        if (newProject) {
+            setAllProjects([newProject, ...allProjects]);
+        }
+
+    } catch (error) {
+        console.error("Error creating project: ", error);
+        alert("There was an error creating your project. Please try again.");
     }
   };
 
-  const handleLikeToggle = (projectId: string, isLiked: boolean) => {
+  const handleAddComment = async (projectId: string, content: string) => {
       if (!currentUser) return;
-      if (isLiked) {
-          setAllLikes(allLikes.filter(l => !(l.project_id === projectId && l.user_id === currentUser.id)));
-      } else {
-          const newLike: Like = { user_id: currentUser.id, project_id: projectId };
-          setAllLikes([...allLikes, newLike]);
+      const newCommentData = {
+          project_id: projectId, 
+          user_id: currentUser.id, 
+          content,
+      };
+
+      const { data: newComment, error } = await supabase.from('comments').insert(newCommentData).select().single();
+
+      if (error) {
+          console.error("Error adding comment:", error);
+          alert("Could not post comment.");
+      } else if (newComment) {
+          setAllComments([...allComments, newComment]);
+      }
+  };
+  
+  const handleFollowToggle = async (profileUserId: string) => {
+    if (!currentUser) return;
+    const isFollowing = allFollows.some(f => f.follower_id === currentUser.id && f.followee_id === profileUserId);
+
+    try {
+        if (isFollowing) {
+            const { error } = await supabase.from('follows').delete().match({ follower_id: currentUser.id, followee_id: profileUserId });
+            if (error) throw error;
+            setAllFollows(allFollows.filter(f => !(f.follower_id === currentUser.id && f.followee_id === profileUserId)));
+        } else {
+            const newFollow = { follower_id: currentUser.id, followee_id: profileUserId };
+            const { error } = await supabase.from('follows').insert(newFollow);
+            if (error) throw error;
+            setAllFollows([...allFollows, newFollow]);
+        }
+    } catch (error) {
+        console.error("Error toggling follow:", error);
+        alert("There was an error updating follow status.");
+    }
+  };
+
+  const handleLikeToggle = async (projectId: string, isLiked: boolean) => {
+      if (!currentUser) return;
+      try {
+          if (isLiked) {
+              const { error } = await supabase.from('likes').delete().match({ project_id: projectId, user_id: currentUser.id });
+              if (error) throw error;
+              setAllLikes(allLikes.filter(l => !(l.project_id === projectId && l.user_id === currentUser.id)));
+          } else {
+              const newLike = { user_id: currentUser.id, project_id: projectId };
+              const { error } = await supabase.from('likes').insert(newLike);
+              if (error) throw error;
+              setAllLikes([...allLikes, newLike]);
+          }
+      } catch (error) {
+          console.error("Error toggling like:", error);
+          alert("There was an error updating like status.");
       }
   };
 
   const navigateToProfile = (userId: string) => setView({ page: 'profile', data: userId });
   const navigateToFeed = () => setView({ page: 'feed', data: null });
+
+  if (loading) {
+      return <div className="centered-message">Loading Vibe...</div>
+  }
 
   return (
     <>
